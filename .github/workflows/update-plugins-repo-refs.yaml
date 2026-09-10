@@ -200,6 +200,10 @@ jobs:
           npmPackages=()
           declare -A packageToWorkspace=()
           declare -A packageToDirectory=()
+          # Workspaces successfully scanned from their current source refs.
+          # npm discovery can still return packages that were removed or renamed
+          # in those refs, so use this to reject unmapped packages later.
+          declare -A overlayWorkspaceScanned=()
 
           # ===== Overlay-first package discovery =====
           # Enumerate existing workspaces from the overlay repo and discover
@@ -237,6 +241,7 @@ jobs:
               return 1
             fi
 
+            overlayWorkspaceScanned["$wsName"]="true"
             local count=0
             while IFS= read -r line; do
               [[ -z "$line" ]] && continue
@@ -407,6 +412,16 @@ jobs:
                   pluginInfo=$(echo "${pluginInfo}" | jq --arg dir "${treeDirectory}" '.directory = $dir')
                 fi
               fi
+
+              # A package can remain published in NPM after it has been removed
+              # or renamed in the source repository. If its workspace was scanned
+              # successfully at the current source ref but the package was not
+              # found there, do not reintroduce its stale repository.directory.
+              if [[ -n "${workspace}" && -n "${overlayWorkspaceScanned[${workspace}]+x}" && -z "${packageToWorkspace[${packageName}]+x}" ]]; then
+                message "    Skipping published plugin ${packageName}@${version}: package directory is not present at the current source ref for workspace ${workspace}"
+                continue
+              fi
+
               if [[ "${INPUT_WORKSPACE_PATH}" != "" && "${INPUT_WORKSPACE_PATH}" != "workspaces/${workspace}" ]]
               then
                 message "    Skipping published plugin ${packageName}: not part of workspace ${INPUT_WORKSPACE_PATH}"
